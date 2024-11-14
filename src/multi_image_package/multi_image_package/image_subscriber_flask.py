@@ -9,6 +9,7 @@ import numpy as np
 from flask import Flask, Response, render_template_string, request
 import threading
 
+# Flask 애플리케이션 객체 생성
 app = Flask(__name__)
 points = []
 image_subscriber = None  # ImageSubscriber 인스턴스를 전역 변수로 설정
@@ -66,23 +67,27 @@ def index():
     if status == "단속 전":
         title = "단속 전"
         video_content = f"""
-            <div class="video">
-                <h2>{title}</h2>
-                <img src="{{{{ url_for('video_feed_1') }}}}" width="1280" height="960">
+            <div class="video-container single-video">
+                <div class="video">
+                    <h2>{title}</h2>
+                    <img src="{{{{ url_for('video_feed_1') }}}}" width="640" height="480">
+                </div>
             </div>
         """
     elif status == "단속 중":
         title = "단속 중"
         video_content = f"""
-            <div class="video">
-                <h2>{title}</h2>
-                <img src="{{{{ url_for('video_feed_1') }}}}" width="1280" height="960">
+            <div class="video-container single-video">
+                <div class="video">
+                    <h2>{title}</h2>
+                    <img src="{{{{ url_for('video_feed_1') }}}}" width="640" height="480">
+                </div>
             </div>
         """
     elif status == "도주차량 발생":
         title = "도주차량 발생"
         video_content = f"""
-            <div class="video-container">
+            <div class="video-container double-video">
                 <div class="video">
                     <h2>Camera 1</h2>
                     <img src="{{{{ url_for('video_feed_1') }}}}" width="640" height="480">
@@ -99,13 +104,29 @@ def index():
         <html>
             <head>
                 <style>
+                    /* 비디오 컨테이너 중앙 정렬 */
                     .video-container {{
                         display: flex;
+                        align-items: center;
                         justify-content: center;
+                        margin-top: 20px;
                     }}
+
+                    /* 단일 비디오일 때 중앙 정렬 */
+                    .single-video {{
+                        flex-direction: column;
+                    }}
+
+                    /* 두 개의 비디오일 때 좌우로 정렬 */
+                    .double-video {{
+                        flex-direction: row;
+                    }}
+
                     .video {{
                         margin: 10px;
+                        text-align: center;
                     }}
+
                     .button-container {{
                         text-align: center;
                         margin-top: 20px;
@@ -135,8 +156,6 @@ def index():
             </body>
         </html>
     """)
-
-
 
 def main(args=None):
     global image_subscriber
