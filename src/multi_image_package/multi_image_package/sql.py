@@ -9,6 +9,9 @@ import threading
 from ultralytics import YOLO
 import time
 
+import mysql.connector
+from datetime import datetime
+
 # Flask 애플리케이션 객체 생성
 app = Flask(__name__)
 points = []  # 다각형 영역 좌표
@@ -58,8 +61,32 @@ class ImageSubscriber(Node):
         # "도주 차량 발생" 상태에서도 YOLO 감지 유지 및 경고 텍스트 표시
         elif status == "도주차량 발생":
             frame, _ = self.process_frame_with_yolo_and_polygon(frame)
-            cv2.putText(frame, "!!!ALERT!!!", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 3)
-        
+            cv2.putText(frame, "!!A drunk driver is fleeing the scene!!", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 3)
+
+            # MySQL 연결
+            connection = mysql.connector.connect(
+                host='localhost', # MySQL 서버 주소
+                user='root', # MySQL 사용자명
+                password='qwer1234', # MySQL 비밀번호
+                database='logs' # logs 데이터베이스
+            )
+            cursor = connection.cursor()
+            # 도주 사건 발생 시 index와 시각을 데이터베이스에 삽입
+            event_index = 123 # 예시: 도주 차량의 고유index
+            escape_time = datetime.now() # 도주 발생 시각 (현재 시간) # SQL INSERT 쿼리
+            insert_query = """
+                INSERT INTO escape_events (event_index, escape_time)
+                VALUES (%s, %s)
+            """
+            # 데이터 삽입
+            cursor.execute(insert_query, (event_index, escape_time)) # 커밋 (변경 사항을 데이터베이스에 반영)
+            connection.commit()
+            print(f"Escape event with index {event_index} recorded at {escape_time}.")
+            
+            # 커서와 연결 종료
+            cursor.close()
+            connection.close()
+
         self.latest_frame_1 = frame
 
     def image_callback_2(self, msg):
