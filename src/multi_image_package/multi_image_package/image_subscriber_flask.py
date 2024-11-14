@@ -14,6 +14,7 @@ app = Flask(__name__)
 points = []  # 다각형 영역 좌표
 image_subscriber = None
 status = "단속 전"
+last_detection_time = None  # 마지막 감지 시간 기록
 
 # 다각형 내 포함 여부 확인 함수
 def is_inside_polygon(point, polygon):
@@ -37,27 +38,33 @@ class ImageSubscriber(Node):
             self.model = None
         self.classNames = ['car']
         self.latest_frame_1 = None
+        self.last_detections = []  # 마지막 감지된 바운딩 박스 좌표를 저장
 
     def image_callback_1(self, msg):
-        global status
+        global status, last_detection_time
         frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
         
-        # "단속 중" 상태에서만 YOLO 탐지를 적용
-        if status == "단속 중":
-            frame, alarm_triggered = self.process_frame_with_yolo_and_polygon(frame)
-            if alarm_triggered:
-                status = "도주차량 발생"  # 차량이 영역을 벗어났을 때 상태 전환
-        else:
-            frame = self.draw_polygon_and_points(frame)  # "단속 전" 상태에서는 폴리곤만 그림
+        # YOLO 탐지를 항상 수행
+        frame, alarm_triggered = self.process_frame_with_yolo_and_polygon(frame)
+        
+        # "단속 중" 상태일 때만 다각형 내 포함 여부 확인
+        if status == "단속 중" and alarm_triggered:
+            status = "도주차량 발생"  # 차량이 영역을 벗어났을 때 상태 전환
+        
         self.latest_frame_1 = frame
 
     def process_frame_with_yolo_and_polygon(self, frame):
+        global last_detection_time
         alarm_triggered = False
         if self.model is None:
             return frame, alarm_triggered
+
+        current_time = time.time()
         
-        # YOLO 모델을 사용한 객체 감지
-        results = self.model(frame, stream=True)
+        # YOLO 모델을 사용하여 객체 감지
+        results = self.model(frame)
+        self.last_detections = []  # 새로운 프레임에서 탐지된 객체 정보를 갱신
+
         for r in results:
             for box in r.boxes:
                 confidence = box.conf[0]
@@ -69,11 +76,14 @@ class ImageSubscriber(Node):
                         cv2.putText(frame, f"{self.classNames[cls]}: {confidence:.2f}", 
                                     (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
                     
+                    # 현재 탐지된 바운딩 박스를 기록
+                    self.last_detections.append((x1, y1, x2, y2))
+
                     # 바운딩 박스 중심 계산
                     center_x, center_y = (x1 + x2) // 2, (y1 + y2) // 2
 
                     # 객체가 다각형을 벗어났는지 확인
-                    if len(points) == 4 and not is_inside_polygon((center_x, center_y), points):
+                    if status == "단속 중" and len(points) == 4 and not is_inside_polygon((center_x, center_y), points):
                         alarm_triggered = True
 
         frame = self.draw_polygon_and_points(frame)  # 프레임에 다각형 및 포인트 표시
@@ -168,15 +178,20 @@ def index():
         </html>
     """)
 
+def run_flask_app():
+    app.run(host='0.0.0.0', port=5000, threaded=True)
+
 def main(args=None):
     global image_subscriber
     rclpy.init(args=args)
     image_subscriber = ImageSubscriber()
 
-    flask_thread = threading.Thread(target=lambda: app.run(host='0.0.0.0', port=5000))
+    # Flask 앱을 별도 스레드에서 실행
+    flask_thread = threading.Thread(target=run_flask_app)
     flask_thread.daemon = True
     flask_thread.start()
 
+    # rclpy 노드 스핀을 실행
     try:
         rclpy.spin(image_subscriber)
     except KeyboardInterrupt:
