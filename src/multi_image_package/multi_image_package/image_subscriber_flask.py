@@ -9,11 +9,23 @@ import numpy as np
 from flask import Flask, Response, render_template_string, request
 import threading
 
-# Flask 애플리케이션 객체 생성
 app = Flask(__name__)
 points = []
-image_subscriber = None  # ImageSubscriber 인스턴스를 전역 변수로 설정
-status = "단속 전"  # 상태 초기값 설정
+image_subscriber = None
+status = "단속 전"
+
+def draw_polygon(event, x, y, flags, param):
+    global points, status
+    if event == cv2.EVENT_LBUTTONDOWN:
+        points.append((x, y))
+        print(f"Point {len(points)}: ({x}, {y})")
+        if len(points) >= 3 and status == "단속 전":
+            status = "단속 중"  # 다각형이 설정되면 자동으로 "단속 중" 상태로 전환
+
+def is_inside_polygon(point, polygon):
+    poly_array = np.array(polygon, dtype=np.int32)
+    result = cv2.pointPolygonTest(poly_array, point, False)
+    return result >= 0
 
 class ImageSubscriber(Node):
     def __init__(self):
@@ -32,11 +44,44 @@ class ImageSubscriber(Node):
 
     def image_callback_1(self, msg):
         frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+        global status
+        if status == "단속 중":
+            frame, alarm_triggered = self.process_frame_with_yolo_and_polygon(frame)
+            if alarm_triggered:
+                status = "도주차량 발생"  # 차량이 영역을 벗어나면 "도주차량 발생" 상태로 전환
         self.latest_frame_1 = frame
 
     def image_callback_2(self, msg):
         frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
         self.latest_frame_2 = frame
+
+    def process_frame_with_yolo_and_polygon(self, frame):
+        alarm_triggered = False
+        results = self.model(frame, stream=True)
+
+        for r in results:
+            for box in r.boxes:
+                confidence = box.conf[0]
+                if confidence >= 0.7:
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                    cls = int(box.cls[0])
+                    if cls < len(self.classNames):
+                        cv2.putText(frame, f"{self.classNames[cls]}: {confidence:.2f}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                    center_x = (x1 + x2) // 2
+                    center_y = (y1 + y2) // 2
+
+                    if len(points) >= 3:
+                        if not is_inside_polygon((center_x, center_y), points):
+                            alarm_triggered = True
+
+        for point in points:
+            cv2.circle(frame, point, 5, (0, 255, 0), -1)
+        if len(points) >= 3:
+            poly_array = np.array(points, np.int32)
+            cv2.polylines(frame, [poly_array], isClosed=True, color=(255, 0, 0), thickness=2)
+        
+        return frame, alarm_triggered
 
 def generate_frames(camera_id):
     while True:
@@ -63,7 +108,7 @@ def set_status():
 
 @app.route('/')
 def index():
-    # 상태에 따라 화면 구성과 타이틀 변경
+    global status
     if status == "단속 전":
         title = "단속 전"
         video_content = f"""
@@ -99,46 +144,21 @@ def index():
             </div>
         """
 
-    # 렌더링할 HTML 템플릿
     return render_template_string(f"""
         <html>
             <head>
                 <style>
-                    /* 비디오 컨테이너 중앙 정렬 */
-                    .video-container {{
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                        margin-top: 20px;
-                    }}
-
-                    /* 단일 비디오일 때 중앙 정렬 */
-                    .single-video {{
-                        flex-direction: column;
-                    }}
-
-                    /* 두 개의 비디오일 때 좌우로 정렬 */
-                    .double-video {{
-                        flex-direction: row;
-                    }}
-
-                    .video {{
-                        margin: 10px;
-                        text-align: center;
-                    }}
-
-                    .button-container {{
-                        text-align: center;
-                        margin-top: 20px;
-                    }}
+                    .video-container {{ display: flex; align-items: center; justify-content: center; margin-top: 20px; }}
+                    .single-video {{ flex-direction: column; }}
+                    .double-video {{ flex-direction: row; }}
+                    .video {{ margin: 10px; text-align: center; }}
+                    .button-container {{ text-align: center; margin-top: 20px; }}
                 </style>
                 <script>
                     function setStatus(newStatus) {{
                         fetch('/set_status', {{
                             method: 'POST',
-                            headers: {{
-                                'Content-Type': 'application/x-www-form-urlencoded',
-                            }},
+                            headers: {{ 'Content-Type': 'application/x-www-form-urlencoded' }},
                             body: 'status=' + newStatus
                         }}).then(() => location.reload());
                     }}
@@ -147,7 +167,6 @@ def index():
             <body>
                 <h1>{title}</h1>
                 {video_content}
-                
                 <div class="button-container">
                     <button onclick="setStatus('단속 전')">단속 전</button>
                     <button onclick="setStatus('단속 중')">단속 중</button>
@@ -165,6 +184,9 @@ def main(args=None):
     flask_thread = threading.Thread(target=lambda: app.run(host='0.0.0.0', port=5000))
     flask_thread.daemon = True
     flask_thread.start()
+
+    cv2.namedWindow("Camera Image 1")
+    cv2.setMouseCallback("Camera Image 1", draw_polygon)
 
     try:
         rclpy.spin(image_subscriber)
