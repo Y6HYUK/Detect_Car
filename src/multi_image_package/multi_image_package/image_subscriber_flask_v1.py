@@ -4,7 +4,7 @@ from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
-from flask import Flask, Response, render_template_string, request, jsonify, redirect, url_for
+from flask import Flask, Response, render_template_string, request, jsonify
 import threading
 from ultralytics import YOLO
 import time
@@ -103,7 +103,7 @@ class ImageSubscriber(Node):
             cv2.polylines(frame, [poly_array], isClosed=True, color=(255, 0, 0), thickness=2)
         return frame
 
-def generate_frames(camera_id, quality = 10):
+def generate_frames(camera_id, quality = 100):
     while True:
         frame = image_subscriber.latest_frame_1 if camera_id == 1 else image_subscriber.latest_frame_2
         if frame is not None:
@@ -136,38 +136,11 @@ def get_status():
     global status
     return jsonify({"status": status})
 
-@app.route('/trigger_alert', methods=['GET'])
+@app.route('/trigger_alert')
 def trigger_alert():
     global status
     status = "도주차량 발생"
-    return redirect(url_for('double_feed'))  # 두 개의 영상 피드를 표시하는 페이지로 리다이렉트
-
-@app.route('/double_feed')
-def double_feed():
-    return render_template_string("""
-        <html>
-            <head>
-                <style>
-                    .video-container { display: flex; justify-content: center; margin-top: 20px; }
-                    .double-video { flex-direction: row; } /* 양옆 배치 */
-                    .video { margin: 10px; text-align: center; }
-                </style>
-            </head>
-            <body>
-                <h1>도주 차량 발생</h1>
-                <div class="video-container double-video">
-                    <div class="video">
-                        <h2>Camera 1</h2>
-                        <img src="{{ url_for('video_feed_1') }}" width="640" height="480">
-                    </div>
-                    <div class="video">
-                        <h2>Camera 2</h2>
-                        <img src="{{ url_for('video_feed_2') }}" width="640" height="480">
-                    </div>
-                </div>
-            </body>
-        </html>
-    """)
+    return jsonify({"status": "alert_triggered"})
 
 @app.route('/')
 def index():
@@ -205,7 +178,6 @@ def index():
                     .video-container {{ display: flex; justify-content: center; margin-top: 20px; }}
                     .double-video {{ flex-direction: row; }} /* 양옆 배치 */
                     .video {{ margin: 10px; text-align: center; }}
-                    #alert-button {{ display: block; margin: 20px auto; }}
                 </style>
                 <script>
                     function addPoint(event) {{
