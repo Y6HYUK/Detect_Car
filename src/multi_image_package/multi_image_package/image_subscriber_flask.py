@@ -29,6 +29,9 @@ class ImageSubscriber(Node):
         self.subscription_1 = self.create_subscription(
             Image, 'camera_image_1', self.image_callback_1, 10
         )
+        self.subscription_2 = self.create_subscription(
+            Image, 'camera_image_2', self.image_callback_2, 10
+        )
         # YOLO 모델 로드
         try:
             self.model = YOLO('/home/yjh/Doosan/Real_project_ws/Week2/_best.pt')
@@ -38,33 +41,39 @@ class ImageSubscriber(Node):
             self.model = None
         self.classNames = ['car']
         self.latest_frame_1 = None
-        self.last_detections = []  # 마지막 감지된 바운딩 박스 좌표를 저장
+        self.latest_frame_2 = None  # 두 번째 카메라 프레임 저장
 
     def image_callback_1(self, msg):
-        global status, last_detection_time
+        global status
         frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
         
-        # YOLO 탐지를 항상 수행
-        frame, alarm_triggered = self.process_frame_with_yolo_and_polygon(frame)
-        
-        # "단속 중" 상태일 때만 다각형 내 포함 여부 확인
-        if status == "단속 중" and alarm_triggered:
-            status = "도주차량 발생"  # 차량이 영역을 벗어났을 때 상태 전환
+        # "단속 전" 또는 "단속 중" 상태일 때만 YOLO 감지 수행
+        if status in ["단속 전", "단속 중"]:
+            frame, alarm_triggered = self.process_frame_with_yolo_and_polygon(frame)
+            
+            # "단속 중" 상태에서만 알람 상태를 확인하여 전환
+            if status == "단속 중" and alarm_triggered:
+                status = "도주차량 발생"  # 차량이 영역을 벗어났을 때 상태를 한번만 전환
+                
+        # "도주 차량 발생" 상태에서도 YOLO 감지 유지 및 경고 텍스트 표시
+        elif status == "도주차량 발생":
+            frame, _ = self.process_frame_with_yolo_and_polygon(frame)
+            cv2.putText(frame, "!!A drunk driver is fleeing the scene!!", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 3)
         
         self.latest_frame_1 = frame
 
+    def image_callback_2(self, msg):
+        frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+        self.latest_frame_2 = frame
+
     def process_frame_with_yolo_and_polygon(self, frame):
-        global last_detection_time
         alarm_triggered = False
         if self.model is None:
             return frame, alarm_triggered
 
-        current_time = time.time()
-        
         # YOLO 모델을 사용하여 객체 감지
         results = self.model(frame)
-        self.last_detections = []  # 새로운 프레임에서 탐지된 객체 정보를 갱신
-
+        
         for r in results:
             for box in r.boxes:
                 confidence = box.conf[0]
@@ -76,9 +85,6 @@ class ImageSubscriber(Node):
                         cv2.putText(frame, f"{self.classNames[cls]}: {confidence:.2f}", 
                                     (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
                     
-                    # 현재 탐지된 바운딩 박스를 기록
-                    self.last_detections.append((x1, y1, x2, y2))
-
                     # 바운딩 박스 중심 계산
                     center_x, center_y = (x1 + x2) // 2, (y1 + y2) // 2
 
@@ -99,7 +105,7 @@ class ImageSubscriber(Node):
 
 def generate_frames(camera_id):
     while True:
-        frame = image_subscriber.latest_frame_1
+        frame = image_subscriber.latest_frame_1 if camera_id == 1 else image_subscriber.latest_frame_2
         if frame is not None:
             ret, buffer = cv2.imencode('.jpg', frame)
             frame = buffer.tobytes()
@@ -110,6 +116,10 @@ def generate_frames(camera_id):
 def video_feed_1():
     return Response(generate_frames(1), mimetype='multipart/x-mixed-replace; boundary=frame')
 
+@app.route('/video_feed_2')
+def video_feed_2():
+    return Response(generate_frames(2), mimetype='multipart/x-mixed-replace; boundary=frame')
+
 @app.route('/add_point', methods=['POST'])
 def add_point():
     global status, points
@@ -119,6 +129,11 @@ def add_point():
         if len(points) == 4:
             status = "단속 중"  # 4개의 점이 설정되면 "단속 중" 상태로 전환
     return jsonify({"points": points, "status": status})
+
+@app.route('/get_status', methods=['GET'])
+def get_status():
+    global status
+    return jsonify({"status": status})
 
 @app.route('/')
 def index():
@@ -140,10 +155,14 @@ def index():
         """
     elif status == "도주차량 발생":
         video_content = f"""
-            <div class="double-video">
+            <div class="video-container double-video">
                 <div class="video">
                     <h2>Camera 1</h2>
                     <img src="{{{{ url_for('video_feed_1') }}}}" width="640" height="480">
+                </div>
+                <div class="video">
+                    <h2>Camera 2</h2>
+                    <img src="{{{{ url_for('video_feed_2') }}}}" width="640" height="480">
                 </div>
             </div>
         """
@@ -153,6 +172,7 @@ def index():
             <head>
                 <style>
                     .video-container {{ display: flex; justify-content: center; margin-top: 20px; }}
+                    .double-video {{ flex-direction: row; }} /* 양옆 배치 */
                     .video {{ margin: 10px; text-align: center; }}
                 </style>
                 <script>
@@ -169,6 +189,18 @@ def index():
                             }}
                         }});
                     }}
+
+                    function checkStatus() {{
+                        fetch('/get_status')
+                        .then(response => response.json())
+                        .then(data => {{
+                            if (data.status === "도주차량 발생") {{
+                                location.reload();  // 도주 차량 발생 상태로 전환되면 페이지 새로고침
+                            }}
+                        }});
+                    }}
+
+                    setInterval(checkStatus, 1000);  // 1초마다 상태 체크
                 </script>
             </head>
             <body>
