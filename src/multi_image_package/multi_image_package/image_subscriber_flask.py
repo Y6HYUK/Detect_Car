@@ -6,97 +6,143 @@ import cv2
 import time
 from ultralytics import YOLO
 import numpy as np
-from flask import Flask, Response
+from flask import Flask, Response, render_template_string, request
 import threading
 
-# 마우스로 설정된 좌표를 저장할 리스트
-points = []
-
-# 마우스 이벤트 콜백 함수 (필요시 유지)
-def draw_polygon(event, x, y, flags, param):
-    global points
-    if event == cv2.EVENT_LBUTTONDOWN:
-        points.append((x, y))
-        print(f"Point {len(points)}: ({x}, {y})")
-
-# 점이 다각형 내부에 있는지 확인하는 함수
-def is_inside_polygon(point, polygon):
-    poly_array = np.array(polygon, dtype=np.int32)
-    result = cv2.pointPolygonTest(poly_array, point, False)
-    return result >= 0
-
-# Flask 앱 생성
 app = Flask(__name__)
+points = []
+image_subscriber = None  # ImageSubscriber 인스턴스를 전역 변수로 설정
+status = "단속 전"  # 상태 초기값 설정
 
 class ImageSubscriber(Node):
     def __init__(self):
         super().__init__('image_subscriber')
         self.bridge = CvBridge()
-
-        # 두 개의 이미지 토픽을 구독
         self.subscription_1 = self.create_subscription(
-            Image,
-            'camera_image_1',
-            self.image_callback_1,
-            10
+            Image, 'camera_image_1', self.image_callback_1, 10
         )
         self.subscription_2 = self.create_subscription(
-            Image,
-            'camera_image_2',
-            self.image_callback_2,
-            10
+            Image, 'camera_image_2', self.image_callback_2, 10
         )
-
-        # YOLO 모델 로드
-        try:
-            self.model = YOLO('/home/yjh/Doosan/Real_project_ws/Week2/_best.pt')  # 올바른 모델 경로로 수정
-            self.get_logger().info('YOLO 모델 로드 성공')
-        except Exception as e:
-            self.get_logger().error(f'YOLO 모델 로드 실패: {e}')
-            self.model = None
-
-        self.classNames = ['car']  # 클래스 이름
-        self.latest_frame = None  # Flask로 전달할 최신 프레임
-
-    def process_frame_with_yolo_and_polygon(self, frame):
-        # YOLO 감지 및 다각형 영역 체크
-        # (코드 내용 동일)
-        alarm_triggered = False
-
-        # 최신 프레임 업데이트
-        self.latest_frame = frame
+        self.model = YOLO('/home/yjh/Doosan/Real_project_ws/Week2/_best.pt')
+        self.classNames = ['car']
+        self.latest_frame_1 = None
+        self.latest_frame_2 = None
 
     def image_callback_1(self, msg):
-        # 첫 번째 이미지 토픽에서 받은 메시지 처리
         frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
-        self.process_frame_with_yolo_and_polygon(frame)
+        self.latest_frame_1 = frame
 
     def image_callback_2(self, msg):
-        # 두 번째 이미지 토픽에서 받은 메시지 처리 (YOLO 미적용)
         frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
-        self.latest_frame = frame  # 최신 프레임을 업데이트
+        self.latest_frame_2 = frame
 
-# 프레임을 Flask 스트림으로 전달하는 함수
-def generate_frames():
+def generate_frames(camera_id):
     while True:
-        if image_subscriber.latest_frame is not None:
-            # OpenCV 이미지를 JPEG로 인코딩
-            ret, buffer = cv2.imencode('.jpg', image_subscriber.latest_frame)
+        frame = image_subscriber.latest_frame_1 if camera_id == 1 else image_subscriber.latest_frame_2
+        if frame is not None:
+            ret, buffer = cv2.imencode('.jpg', frame)
             frame = buffer.tobytes()
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
 
-# Flask 경로 설정
-@app.route('/video_feed')
-def video_feed():
-    return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+@app.route('/video_feed_1')
+def video_feed_1():
+    return Response(generate_frames(1), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/video_feed_2')
+def video_feed_2():
+    return Response(generate_frames(2), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/set_status', methods=['POST'])
+def set_status():
+    global status
+    status = request.form.get('status')
+    return "Status updated", 200
+
+@app.route('/')
+def index():
+    # 상태에 따라 화면 구성과 타이틀 변경
+    if status == "단속 전":
+        title = "단속 전"
+        video_content = f"""
+            <div class="video">
+                <h2>{title}</h2>
+                <img src="{{{{ url_for('video_feed_1') }}}}" width="1280" height="960">
+            </div>
+        """
+    elif status == "단속 중":
+        title = "단속 중"
+        video_content = f"""
+            <div class="video">
+                <h2>{title}</h2>
+                <img src="{{{{ url_for('video_feed_1') }}}}" width="1280" height="960">
+            </div>
+        """
+    elif status == "도주차량 발생":
+        title = "도주차량 발생"
+        video_content = f"""
+            <div class="video-container">
+                <div class="video">
+                    <h2>Camera 1</h2>
+                    <img src="{{{{ url_for('video_feed_1') }}}}" width="640" height="480">
+                </div>
+                <div class="video">
+                    <h2>Camera 2</h2>
+                    <img src="{{{{ url_for('video_feed_2') }}}}" width="640" height="480">
+                </div>
+            </div>
+        """
+
+    # 렌더링할 HTML 템플릿
+    return render_template_string(f"""
+        <html>
+            <head>
+                <style>
+                    .video-container {{
+                        display: flex;
+                        justify-content: center;
+                    }}
+                    .video {{
+                        margin: 10px;
+                    }}
+                    .button-container {{
+                        text-align: center;
+                        margin-top: 20px;
+                    }}
+                </style>
+                <script>
+                    function setStatus(newStatus) {{
+                        fetch('/set_status', {{
+                            method: 'POST',
+                            headers: {{
+                                'Content-Type': 'application/x-www-form-urlencoded',
+                            }},
+                            body: 'status=' + newStatus
+                        }}).then(() => location.reload());
+                    }}
+                </script>
+            </head>
+            <body>
+                <h1>{title}</h1>
+                {video_content}
+                
+                <div class="button-container">
+                    <button onclick="setStatus('단속 전')">단속 전</button>
+                    <button onclick="setStatus('단속 중')">단속 중</button>
+                    <button onclick="setStatus('도주차량 발생')">도주차량 발생</button>
+                </div>
+            </body>
+        </html>
+    """)
+
+
 
 def main(args=None):
     global image_subscriber
     rclpy.init(args=args)
     image_subscriber = ImageSubscriber()
 
-    # Flask 서버를 별도의 스레드에서 실행
     flask_thread = threading.Thread(target=lambda: app.run(host='0.0.0.0', port=5000))
     flask_thread.daemon = True
     flask_thread.start()
