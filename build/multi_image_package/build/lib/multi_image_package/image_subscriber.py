@@ -76,31 +76,33 @@ class ImageSubscriber(Node):
         # YOLO 결과 박스 그리기 및 다각형 영역 확인
         for r in results:
             for box in r.boxes:
-                x1, y1, x2, y2 = map(int, box.xyxy[0])
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
-
-                # 바운딩 박스의 중심 좌표
-                center_x = (x1 + x2) // 2
-                center_y = (y1 + y2) // 2
-
-                ##### 바운딩박스의 클래스 정보, confidence를 텍스트로 출력하는 코드 추가 11.14 #####
-                # 클래스와 confidence 정보 표시
-                cls = int(box.cls[0])  # 클래스 인덱스
                 confidence = box.conf[0]  # 신뢰도 (confidence)
-                org = (x1, y1 - 10)  # 텍스트 위치 (바운딩 박스 위)
-                font = cv2.FONT_HERSHEY_SIMPLEX
-                fontScale = 0.5
-                color = (0, 255, 0)  # 텍스트 색상 (초록색)
-                thickness = 1
 
-                # 클래스 이름과 confidence를 텍스트로 표시
-                if cls < len(self.classNames):
-                    cv2.putText(frame, f"{self.classNames[cls]}: {confidence:.2f}", org, font, fontScale, color, thickness)
+                # confidence가 0.7 이상일 때만 바운딩 박스와 텍스트를 표시
+                if confidence >= 0.7:
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
 
-                # 다각형 내에 있는지 확인
-                if len(points) == 4:  # 다각형이 최소 3개 점으로 정의된 경우
-                    if not is_inside_polygon((center_x, center_y), points):
-                        alarm_triggered = True  # 다각형 영역 밖에 있으면 알람 활성화
+                    # 클래스와 confidence 정보 표시
+                    cls = int(box.cls[0])  # 클래스 인덱스
+                    org = (x1, y1 - 10)  # 텍스트 위치 (바운딩 박스 위)
+                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    fontScale = 0.6  # 크기를 살짝 키움
+                    color = (0, 0, 255)  # 빨간색 텍스트
+                    thickness = 2  # 텍스트 두께 증가
+
+                    # 클래스 이름과 confidence를 텍스트로 표시
+                    if cls < len(self.classNames):
+                        cv2.putText(frame, f"{self.classNames[cls]}: {confidence:.2f}", org, font, fontScale, color, thickness)
+
+                    # 바운딩 박스 중심 좌표 계산
+                    center_x = (x1 + x2) // 2
+                    center_y = (y1 + y2) // 2
+
+                    # 다각형 내에 있는지 확인
+                    if len(points) == 4:  # 다각형이 최소 3개 점으로 정의된 경우
+                        if not is_inside_polygon((center_x, center_y), points):
+                            alarm_triggered = True  # 다각형 영역 밖에 있으면 알람 활성화
 
         # 알람이 활성화되면 화면에 표시
         if alarm_triggered:

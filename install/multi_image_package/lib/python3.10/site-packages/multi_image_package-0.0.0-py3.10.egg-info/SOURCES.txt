@@ -13,6 +13,7 @@ multi_image_package/image_publisher_1.py
 multi_image_package/image_publisher_2.py
 multi_image_package/image_sub_init.py
 multi_image_package/image_subscriber.py
+multi_image_package/image_subscriber_flask.py
 resource/multi_image_package
 test/test_copyright.py
 test/test_flake8.py

@@ -2,3 +2,4 @@
 image_publisher_1 = multi_image_package.image_publisher_1:main
 image_publisher_2 = multi_image_package.image_publisher_2:main
 image_subscriber = multi_image_package.image_subscriber:main
+image_subscriber_flask = multi_image_package.image_subscriber_flask:main
