@@ -1,11 +1,12 @@
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import Point, PoseStamped
+from geometry_msgs.msg import Point, PoseStamped, PoseWithCovarianceStamped
 # Point: target_coordinates 토픽에서 수신하는 좌표 정보에 사용되는 메시지 타입.
 # PoseStamped: 이동 목표 지점(goal)을 설정할 때 사용하는 메시지 타입.
 from nav2_msgs.action import NavigateToPose # NavigateToPose: 네비게이션 액션 타입으로, AMR이 특정 위치로 이동할 수 있도록 함
 from rclpy.action import ActionClient
 from rclpy.qos import QoSProfile
+import time
 
 class AMRNavigator(Node):
     def __init__(self):
@@ -34,11 +35,50 @@ class AMRNavigator(Node):
         # 초기화 메시지
         self.get_logger().info('AMR Navigator Node Initialized. Waiting for target coordinates...')
 
+        # initialpose 퍼블리셔 생성
+        self.initial_pose_publisher = self.create_publisher(PoseWithCovarianceStamped, 'initialpose', 10)
+        # 초기 위치 설정
+        self.set_initial_pose()
+
         # 현재 목표 수락 상태
         self.current_goal_accepted = False  
         # self.current_goal_accepted: 현재 목표가 수락되었는지 여부를 추적하여 중복 요청을 방지합니다.
         
 
+    def set_initial_pose(self):
+        """
+        initial pose를 설정하여 로봇의 시작 위치를 맵에 설정
+        """
+        initial_pose = PoseWithCovarianceStamped()
+        initial_pose.header.frame_id = 'map'  # 맵 좌표계 기준
+        initial_pose.header.stamp = self.get_clock().now().to_msg()
+        
+        # 터틀봇3의 초기 위치 좌표 설정 (예: 예시 값에서 시작)
+        initial_pose.pose.pose.position.x = 0.15624968707561493
+        initial_pose.pose.pose.position.y = -0.09062561392784119
+        initial_pose.pose.pose.position.z = 0.0  # 2D 평면 상이므로 z=0
+        
+        # 터틀봇3의 초기 방향 (orientation) 설정
+        initial_pose.pose.pose.orientation.x = 0.0
+        initial_pose.pose.pose.orientation.y = 0.0
+        initial_pose.pose.pose.orientation.z = -0.01162738470072742
+        initial_pose.pose.pose.orientation.w = 0.9999323996776088
+
+        # 위치와 방향에 대한 불확실성 (covariance) 설정
+        initial_pose.pose.covariance = [0.25, 0.0, 0.0, 0.0, 0.0, 0.0,
+                                        0.0, 0.25, 0.0, 0.0, 0.0, 0.0,
+                                        0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                                        0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                                        0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                                        0.0, 0.0, 0.0, 0.0, 0.0, 0.06853891909122467]
+
+        # 퍼블리시하여 초기 위치 설정
+        self.get_logger().info('Setting initial pose with specific coordinates and orientation...')
+        self.initial_pose_publisher.publish(initial_pose)
+
+        # 잠시 대기하여 initial pose가 적용될 시간을 줌
+        time.sleep(1)  # initial pose 퍼블리시 후 1초 대기
+        
     def target_callback(self, msg):
         """
         target_coordinates 토픽에서 목표 좌표를 수신하여 네비게이션 액션을 실행합니다.
@@ -58,6 +98,8 @@ class AMRNavigator(Node):
         goal_msg.pose.header.stamp = self.get_clock().now().to_msg()
         goal_msg.pose.pose.position.x = x
         goal_msg.pose.pose.position.y = y
+        goal_msg.pose.pose.position.z = 0.0  # 2D 평면 상이므로 z=0
+        
         goal_msg.pose.pose.orientation.w = 1.0  # 방향 (정면) orientation.w = 1.0으로 설정하여 목표 지점의 방향을 기본값으로 설정
 
         # 액션 서버 연결 대기
@@ -132,34 +174,6 @@ navigate_to_target 메서드에서 PoseStamped 메시지를 사용하여 목표 
 goal_response_callback: 목표 좌표가 수락되었는지 확인.
 navigation_result_callback: AMR이 목표 지점에 성공적으로 도착했는지 확인.
 '''
-
-'''
-프로세스 보완 및 주요 포인트
-
-Initial Pose 설정:
-이 코드는 initial pose를 직접 설정하지 않습니다. 대신, Rviz에서 2D Pose Estimate 도구를 사용하여 초기 위치를 설정해야 합니다.
-초기 위치는 네비게이션 스택이 AMR의 위치를 추적하는 데 필수적입니다.
-
-목표 좌표 수신 및 이동:
-target_coordinates 토픽에서 목표 좌표를 수신하면 네비게이션 스택의 NavigateToPose 액션을 호출하여 AMR이 해당 지점으로 이동합니다.
-
-장애물 회피 및 경로 재설정:
-네비게이션 스택의 경로 생성 알고리즘은 자동으로 장애물을 감지하고 경로를 재설정합니다.
-추가적인 코드는 필요하지 않으며, 네비게이션 스택의 내부 동작으로 처리됩니다.
-
-결과 처리 및 상태 관리:
-목표가 수락되었는지 확인 (goal_response_callback).
-이동 결과를 처리 (navigation_result_callback).
-이동이 완료되거나 실패하면 다음 목표를 받을 수 있도록 상태를 초기화.
-
-Rviz에서 시각화:
-Rviz를 사용해 AMR의 경로, 장애물, 현재 위치 등을 실시간으로 시각화할 수 있습니다.
-
-명령:
-ros2 launch nav2_bringup bringup_launch.py use_sim_time:=true
-
-'''
-
 
 '''
 실행 순서
