@@ -24,6 +24,7 @@ setup(
             'image_publisher_2 = multi_image_package.image_publisher_2:main',
             'image_subscriber = multi_image_package.image_subscriber:main',
             'image_subscriber_flask = multi_image_package.image_subscriber_flask:main',
+            'amr_operating = multi_image_package.amr_operating:main',  # 추가된 노드
         ],
     },
 )
