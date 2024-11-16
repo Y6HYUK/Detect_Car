@@ -8,6 +8,7 @@ from flask import Flask, Response, render_template_string, request, jsonify, red
 import threading
 from ultralytics import YOLO
 import time
+from geometry_msgs.msg import Point  # (AMR 구동을 위해 바운딩 박스 좌표를 보내야함)
 
 # Flask 애플리케이션 객체 생성
 app = Flask(__name__)
@@ -32,6 +33,9 @@ class ImageSubscriber(Node):
         self.subscription_2 = self.create_subscription(
             Image, 'camera_image_2', self.image_callback_2, 10
         )
+        # 바운딩 박스 좌표를 AMR 구현 노드로 보내기 위해 퍼블리셔 생성
+        self.target_publisher = self.create_publisher(Point, 'target_coordinates', 10)
+
         # YOLO 모델 로드
         try:
             self.model = YOLO('/home/yjh/Doosan/Real_project_ws/Week2/_best.pt')
@@ -88,6 +92,9 @@ class ImageSubscriber(Node):
                     # 바운딩 박스 중심 계산
                     center_x, center_y = (x1 + x2) // 2, (y1 + y2) // 2
 
+                    # 중심값을 ROS2 토픽으로 발행
+                    self.publish_target_coordinates(center_x, center_y)
+
                     # 객체가 다각형을 벗어났는지 확인
                     if status == "단속 중" and len(points) == 4 and not is_inside_polygon((center_x, center_y), points):
                         alarm_triggered = True
@@ -102,6 +109,15 @@ class ImageSubscriber(Node):
             poly_array = np.array(points, np.int32)
             cv2.polylines(frame, [poly_array], isClosed=True, color=(255, 0, 0), thickness=2)
         return frame
+    
+    # 바운딩 박스 좌표의 중심값을 발행하기 위한 코드
+    def publish_target_coordinates(self, x, y):
+        target_msg = Point()
+        target_msg.x = x
+        target_msg.y = y
+        target_msg.z = 0.0  # Z값은 사용하지 않으므로 0으로 설정
+        self.target_publisher.publish(target_msg)
+        self.get_logger().info(f"발행된 좌표: x={x}, y={y}")
 
 def generate_frames(camera_id, quality = 10):
     while True:

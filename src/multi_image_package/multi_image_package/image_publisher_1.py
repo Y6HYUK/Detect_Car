@@ -10,7 +10,7 @@ class CameraPublisher1(Node):
         self.publisher_ = self.create_publisher(Image, 'camera_image_1', 10)
         timer_period = 0.1  # Publish at 10 Hz
         self.timer = self.create_timer(timer_period, self.publish_image)
-        self.cap = cv2.VideoCapture('/dev/video2')  # 첫 번째 카메라 장치
+        self.cap = cv2.VideoCapture('/dev/video2')  # 첫 번째 카메라 장치 (usb 웹캠 : video 2)
         self.bridge = CvBridge()
 
         if not self.cap.isOpened():
